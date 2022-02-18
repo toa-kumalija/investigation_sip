@@ -1,0 +1,55 @@
+FROM debian:stretch
+
+MAINTAINER Ghislain MARY <ghislain.mary@belledonne-communications.com>
+
+
+# Add backport repository
+RUN echo "deb http://deb.debian.org/debian stretch-backports main" >> /etc/apt/sources.list
+RUN echo "deb http://deb.debian.org/debian stretch-backports-sloppy main" >> /etc/apt/sources.list
+
+# Configure locale
+RUN	apt-get update && \
+    apt-get install -y locales && \
+    apt-get clean && \
+    echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
+    locale-gen
+ENV LANG='en_US.UTF-8' LANGUAGE='en_US:en' LC_ALL='en_US.UTF-8'
+
+ENV SHELL=/bin/bash
+#ENV PS1='\[\e[33m\]\u@bc-dev-debian9>\[\e[0m\] '
+
+# Install common general tools
+RUN apt-get update && \
+    apt-get install -y nano sudo vim && \
+    apt-get clean
+
+# Install development tools
+RUN apt-get update && \
+    apt-get install -y alien at autoconf bison ccache clang doxygen elfutils g++ gdb git graphviz intltool libtool lsb-release make nasm ninja-build openssh-client patch yasm && \
+	apt-get install -t stretch-backports-sloppy -y libarchive13 && \
+    apt-get -t=stretch-backports install -y cmake && \
+    apt-get clean
+
+# Install python modules
+RUN apt-get install -y python-pip python3-pip && \
+    python -m pip install six && \
+    python -m pip install pystache && \
+    python -m pip install graphviz && \
+    python3 -m pip install six && \
+    python3 -m pip install pystache && \
+    python3 -m pip install graphviz
+
+# Install linphone dependencies development packages
+RUN apt-get update && \
+    apt-get install -y libasound2-dev libavcodec-dev libavutil-dev libbsd-dev libegl1-mesa-dev libglew-dev libgsm1-dev libmariadbclient-dev libmbedtls-dev libopus-dev libpq-dev libpulse-dev libspeex-dev libspeexdsp-dev libsqlite3-dev libsrtp2-dev libssl-dev libswscale-dev libturbojpeg0-dev libv4l-dev libvpx-dev libxerces-c-dev libxml2-dev libxv-dev xsdcxx && \
+    apt-get clean
+
+
+# Configure user bc
+RUN useradd -ms /bin/bash bc && \
+    echo 'bc:cotcot' | chpasswd && \
+    echo 'bc ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+
+USER bc
+WORKDIR /home/bc
+CMD bash

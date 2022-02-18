@@ -1,0 +1,318 @@
+#################################################
+# BUILD
+#################################################
+
+.job-linux-desktop:
+
+  stage: build
+  extends: .linux-prepare
+
+  script:
+    - export CC=$CC
+    - export CXX=$CXX
+    - mkdir -p build-desktop
+    - cd build-desktop
+    - echo $CMAKE_GENERATOR
+    - echo $DEFAULT_LINUX_CMAKE_OPTIONS
+    - echo $CMAKE_OPTIONS
+    - echo $CMAKE_SANITIZER_OPTIONS
+    - cmake .. -G "$CMAKE_GENERATOR" -DLINPHONESDK_PLATFORM=Desktop $DEFAULT_LINUX_CMAKE_OPTIONS $CMAKE_OPTIONS $SCHEDULE_CMAKE_OPTIONS $CMAKE_SANITIZER_OPTIONS
+    - echo $ADDITIONAL_BUILD_OPTIONS
+    - cmake --build . --target sdk -- $ADDITIONAL_BUILD_OPTIONS
+    - echo $(git describe) > gitdescribe.txt
+  artifacts:
+    paths:
+      - build-desktop/gitdescribe.txt
+      - build-desktop/linphone-sdk/desktop/bin/*
+      - build-desktop/linphone-sdk/desktop/lib/*
+      - build-desktop/linphone-sdk/desktop/lib64/*
+      - build-desktop/linphone-sdk/desktop/include/*
+      - build-desktop/linphone-sdk/desktop/share/*
+      - build-desktop/WORK/desktop/Build/bctoolbox/tester/*
+      - build-desktop/WORK/desktop/Build/bzrtp/test/*
+      #Lime data folder isn't installed at  the right place !
+      #We have to find it and add it manually...
+      - lime/tester/*
+      - liblinphone/tester/*
+    expire_in: 1 week
+
+
+#################################################
+# TESTS
+#################################################
+
+.test:
+  stage: test
+  extends: .job-prepare
+  allow_failure: true
+  # Prevent tests from fetching repo. They have all needed files in upcoming artifacts
+  variables:
+    GIT_STRATEGY: none
+    GIT_SUBMODULE_STRATEGY: none
+  only:
+    variables:
+      - $ENABLE_LINUX_TESTS
+
+  script:
+    - cd $PATH_TO_TESTER
+    - echo $PATH_TO_TESTER
+
+    #pulseaudio launch for mediastreamer
+    - $PULSEAUDIO
+    - echo $PULSEAUDIO
+
+    #X emulation for linphone
+    - $XVFB &
+    - echo $XVFB
+    - $EXPORT_DISPLAY
+    - echo $EXPORT_DISPLAY
+
+    - ls -la
+
+    #enabling SYS_NICE cap for ms2 and liblinphone testers
+
+    - echo $TESTER_BIN
+    - echo ${TESTER_BIN}
+
+    - echo $SET_CAP_SYS_NICE_LIN
+    - $SET_CAP_SYS_NICE_LIN || true
+
+    - echo $SET_CAP_SYS_NICE_NET_ADMIN_MS
+    - $SET_CAP_SYS_NICE_NET_ADMIN_MS || true
+
+    #checking if the tester has SYS_NICE cap
+    - getcap ./$TESTER_BIN || true
+    - echo $RESOURCES_DIR
+    - echo $ADDITIONNAL_OPTIONS
+    - echo $LOG_PATTERN.txt
+    - ./$TESTER_BIN --verbose --parallel $RESOURCES_DIR $ADDITIONNAL_OPTIONS --log-file $LOG_PATTERN.txt || EXIT=$?
+    - $PULSEAUDIO_KILL
+    - exit $EXIT
+
+
+  after_script:
+    - pwd
+    - cd $PATH_TO_TESTER
+    - echo $PATH_TO_TESTER && pwd
+
+    #.gdbinit is used to store gdb init scripts
+    #we use it to avoid the need to specify manually the commands for each potential coredump
+    - echo "thread apply all bt" | sudo tee .gdbinit
+    #We need to add this command in two .gdbinit files, one in the current directory and the other in the home directory, for gdb to pick the above command.
+    - echo add-auto-load-safe-path $PATH_TO_TESTER/.gdbinit | sudo tee -a /home/bc/.gdbinit
+    # searching for core files and if there are some, launch gdb on all of it
+    # xargs -L1 means that the command in argument will be executed for each line (core dump) found in find output
+    # "true ||" is used here to continue the script even if the find fails
+    - if [[ -n $(find . -type f -name "core*") ]]; then find . -type f -name "core*" | xargs -L1 gdb $TESTER_BIN; fi || true
+    - COMMIT=$(cat ${CI_PROJECT_DIR}/build-desktop/gitdescribe.txt)
+    - echo $COMMIT
+    #generation of html file to redirect on test results page
+
+    - BRANCH=$CI_COMMIT_REF_NAME
+    - echo $BRANCH
+    - ESCAPED_BRANCH=$(echo $BRANCH | tr / _)
+    - echo $ESCAPED_BRANCH
+    - URL=https://linphone.org/snapshots/allure-tests-reports/$ESCAPED_BRANCH/$COMMIT-$CI_JOB_ID/$PLATFORM/$TESTER/allure-report
+
+    - echo "<\!DOCTYPE HTML>" >> index.html
+    - echo "<meta charset=\"UTF-8\">" >> index.html
+    - echo "<meta http-equiv=\"refresh\" content=\"1; url=$URL\">" >> index.html
+    - echo "<script>" >> index.html
+    - echo "  window.location.href = \"$URL\"" >> index.html
+    - echo "</script>" >> index.html
+    - echo "<title>Page Redirection</title>" >> index.html
+    - echo "<\!-- Don't tell people to \`click\` the link, just tell them that it is a link. -->" >> index.html
+    - echo "If you are not redirected automatically, follow the <a href='$URL'>link to see the test report</a>" >> index.html
+    - cat index.html
+    - echo "TEST REPORTS URL $URL"
+    - echo "alias URL=https://linphone.org/snapshots/allure-tests-reports/$ESCAPED_BRANCH/$GITLAB_USER_LOGIN/$COMMIT-$CI_JOB_ID/$PLATFORM/$TESTER/allure-report"
+
+    # simplifing artifacts browsing
+    # Moving artifacts to ease browsing from web view
+    # initially, all the paths needed to be browsed entirely to see artifacts
+    # now there is only the folder "results" to check
+    - sudo mkdir ${CI_PROJECT_DIR}/results
+    - sudo chmod 777 ${CI_PROJECT_DIR}/results
+    - cp -r BCUnitAutomated* ${CI_PROJECT_DIR}/results
+    - cp -r $LOG_PATTERN* ${CI_PROJECT_DIR}/results
+    - cp index.html ${CI_PROJECT_DIR}/results
+    - echo $CI_JOB_ID > ${CI_PROJECT_DIR}/results/tests_id
+    - echo $CI_JOB_URL > ${CI_PROJECT_DIR}/results/job_url
+
+  artifacts:
+    paths:
+      - results/*
+    when: always
+    reports:
+      junit:
+        - $PATH_TO_TESTER/BCUnitAutomated-Results.xml
+    expire_in: 4 week
+
+.test-bctoolbox:
+  extends: .test
+  variables:
+    TESTER_BIN: "bctoolbox_tester"
+    LOG_PATTERN: "logBctoolboxAllPar"
+    PATH_TO_TESTER: "${CI_PROJECT_DIR}/build-desktop/WORK/desktop/Build/bctoolbox/tester"
+    TESTER: "bctoolbox"
+
+# .test-bctoolbox-mr:
+#   extends: .test-bctoolbox
+#   only:
+#     refs:
+#       - branches
+#       - tags
+#     changes:
+#       - bctoolbox
+#     variables:
+#       - $ENABLE_TESTS_IN_MR
+#   except:
+#    - schedules
+
+.test-bellesip:
+  extends: .test
+  variables:
+    TESTER_BIN: "belle_sip_tester"
+    LOG_PATTERN: "logBellesipAllPar"
+    PATH_TO_TESTER: "${CI_PROJECT_DIR}/build-desktop/linphone-sdk/desktop/bin"
+    RESOURCES_DIR: "--resource-dir ../share/"
+    TESTER: "bellesip"
+
+
+# .test-bellesip-mr:
+#   extends: .test-bellesip
+#   only:
+#     refs:
+#       - branches
+#       - tags
+#     changes:
+#       - belle-sip
+#     variables:
+#       - $ENABLE_TESTS_IN_MR
+#   except:
+#    - schedules
+
+
+.test-belr:
+  extends: .test
+  variables:
+    TESTER_BIN: "belr_tester"
+    LOG_PATTERN: "logBelrAllPar"
+    PATH_TO_TESTER: "${CI_PROJECT_DIR}/build-desktop/linphone-sdk/desktop/bin"
+    RESOURCES_DIR: "--resource-dir ../share/belr-tester/res"
+    TESTER: "belr"
+  only:
+    changes:
+      - belr
+
+# .test-belr-mr:
+#   extends: .test-belr
+#   only:
+#     refs:
+#       - branches
+#       - tags
+#     changes:
+#       - belr
+#     variables:
+#       - $ENABLE_TESTS_IN_MR
+#   except:
+#    - schedules
+
+.test-belcard:
+  extends: .test
+  variables:
+    TESTER_BIN: "belcard_tester"
+    LOG_PATTERN: "logBelcardAllPar"
+    PATH_TO_TESTER: "${CI_PROJECT_DIR}/build-desktop/linphone-sdk/desktop/bin"
+    TESTER: "belcard"
+  only:
+    changes:
+      - belcard
+
+
+# .test-belcard-mr:
+#   extends: .test-belcard
+#   only:
+#     refs:
+#       - branches
+#       - tags
+#     changes:
+#       - belcard
+#     variables:
+#       - $ENABLE_TESTS_IN_MR
+#   except:
+#    - schedules
+
+.test-bzrtp:
+  extends: .test
+  variables:
+    TESTER_BIN: "bzrtpTest"
+    LOG_PATTERN: "logBzrtpAllPar"
+    PATH_TO_TESTER: "${CI_PROJECT_DIR}/build-desktop/WORK/desktop/Build/bzrtp/test"
+    #We must tell it that the ressources it wants are in its own folder
+    #different behaviour from other testers
+    RESOURCES_DIR: "--resource-dir ."
+    TESTER: "bzrtp"
+
+# .test-bzrtp-mr:
+#   extends: .test-bzrtp
+#   only:
+#     refs:
+#       - branches
+#       - tags
+#     changes:
+#       - bzrtp
+#     variables:
+#       - $ENABLE_TESTS_IN_MR
+#   except:
+#    - schedules
+
+.test-mediastreamer:
+  tags: [ "docker-test-liblinphone" ]
+  extends: .test
+  variables:
+    TESTER_BIN: "mediastreamer2_tester"
+    PULSEAUDIO: "pulseaudio -D -L module-virtual-source --exit-idle-time=-1"
+    PULSEAUDIO_KILL: "pulseaudio --kill"
+    LOG_PATTERN: "logMediastreamerAllPar"
+    PATH_TO_TESTER: "${CI_PROJECT_DIR}/build-desktop/linphone-sdk/desktop/bin"
+    SET_CAP_SYS_NICE_NET_ADMIN_MS: "sudo setcap cap_net_admin,cap_sys_nice+ep ./${TESTER_BIN}"
+    TESTER: "mediastreamer"
+
+# .test-mediastreamer-mr:
+#   extends: .test-mediastreamer
+#   only:
+#     refs:
+#       - branches
+#       - tags
+#     changes:
+#       - mediastreamer2
+#     variables:
+#       - $ENABLE_TESTS_IN_MR
+#   except:
+#    - schedules
+
+.test-liblinphone:
+  tags: [ "docker-test-liblinphone" ]
+  extends: .test
+  variables:
+    TESTER_BIN: "liblinphone_tester"
+    XVFB: "Xvfb :99"
+    PULSEAUDIO: ""
+    EXPORT_DISPLAY: "export DISPLAY=:99"
+    LOG_PATTERN: "logLiblinphoneAllParThIpv6"
+    PATH_TO_TESTER: "${CI_PROJECT_DIR}/build-desktop/linphone-sdk/desktop/bin"
+    ADDITIONNAL_OPTIONS: " --show-account-manager-logs"
+    SET_CAP_SYS_NICE_LIN: "sudo setcap cap_sys_nice+ep ./${TESTER_BIN}"
+    TESTER: "liblinphone"
+
+.test-liblinphone-mr:
+  extends: .test-liblinphone
+  only:
+    refs:
+      - branches
+      - tags
+    variables:
+      - $ENABLE_TESTS_IN_MR
+  except:
+   - schedules

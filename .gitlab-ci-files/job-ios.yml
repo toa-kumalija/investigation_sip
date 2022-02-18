@@ -1,0 +1,233 @@
+.job-ios:
+
+  extends: .job-prepare
+  stage: build
+  tags: [ "macosx-xcode12" ]
+  except:
+    variables:
+      - $DOCKER_UPDATE
+      - $SKIP_IOS
+
+  script:
+    - echo $IOS_DEPLOY_URL
+    - ccache -s
+    - if [ -d "build-ios" ]; then rm -rf build-ios; fi;
+    - mkdir -p build-ios
+    - cd build-ios
+    - echo $CMAKE_GENERATOR
+    - echo $ARCHS_OPTIONS
+    - echo $CMAKE_OPTIONS
+    - cmake .. -G "$CMAKE_GENERATOR" -DLINPHONESDK_PLATFORM=IOS -DLINPHONESDK_IOS_ARCHS="$ARCHS_OPTIONS" $XCODE_OPTIONS $CMAKE_OPTIONS $SCHEDULE_CMAKE_OPTIONS
+    - echo $ADDITIONAL_BUILD_OPTIONS
+    - echo $ADDITIONAL_BUILD_CONFIGURATIONS
+    - cmake --build . $ADDITIONAL_BUILD_CONFIGURATIONS --target sdk -- $ADDITIONAL_BUILD_OPTIONS
+    # get SDK version from cached cmake variables
+    - cmake --log-level=ERROR -L ../CMakeLists.txt | grep LINPHONESDK_VERSION | cut -d "=" -f2 > linphonesdkversion.txt
+    - cat linphonesdkversion.txt
+    - ccache -s
+
+  artifacts:
+    paths:
+      - build-ios/linphonesdkversion.txt
+      - build-ios/linphone-sdk-*.zip
+      - build-ios/linphone-sdk.podspec
+      - build-ios/docs
+      - tester/IOS/LinphoneTester/Podfile
+
+    when: always
+    expire_in: 1 week
+
+
+#################################################
+# Makefile
+#################################################
+
+
+job-ios-makefile:
+
+  only:
+    variables:
+      - $NIGHTLY_MASTER
+      - $NIGHTLY_RELEASE
+
+  variables:
+    CMAKE_GENERATOR: Unix Makefiles
+    CMAKE_OPTIONS: -DENABLE_SWIFT_WRAPPER=NO
+    ADDITIONAL_BUILD_OPTIONS: -j$MAKEFILE_JOBS
+    ARCHS_OPTIONS: $IOS_ARCHS
+  extends: .job-ios
+
+
+#################################################
+# Ninja
+#################################################
+
+
+job-ios-ninja:
+
+  variables:
+    CMAKE_GENERATOR: Ninja
+    ARCHS_OPTIONS: $IOS_ARCHS
+  extends: .job-ios
+
+job-ios-ninja-allcodecs:
+
+  only:
+    variables:
+      - $NIGHTLY_MASTER
+      - $NIGHTLY_RELEASE
+
+  variables:
+    CMAKE_GENERATOR: Ninja
+    ARCHS_OPTIONS: $IOS_ARCHS
+    CMAKE_OPTIONS: -DENABLE_CODEC2=ON -DENABLE_G729=ON -DENABLE_NON_FREE_CODECS=ON
+  extends: .job-ios
+
+
+job-ios-ninja-g729:
+
+  only:
+    variables:
+      - $NIGHTLY_MASTER
+      - $NIGHTLY_RELEASE
+
+  variables:
+    CMAKE_OPTIONS: -DENABLE_G729=ON
+  extends: job-ios-ninja
+
+
+job-ios-ninja-novideo:
+
+  only:
+    variables:
+      - $NIGHTLY_MASTER
+      - $NIGHTLY_RELEASE
+
+  variables:
+    CMAKE_OPTIONS: -DENABLE_VIDEO=NO
+  extends: job-ios-ninja
+
+
+job-ios-ninja-smallsdk:
+
+  only:
+    variables:
+      - $NIGHTLY_MASTER
+      - $NIGHTLY_RELEASE
+
+  variables:
+    CMAKE_OPTIONS: -DENABLE_VIDEO=NO -DENABLE_ADVANCED_IM=NO -DENABLE_DB_STORAGE=NO
+  extends: job-ios-ninja
+
+
+#################################################
+# XCode
+#################################################
+job-ios-xcode:
+
+  only:
+    variables:
+      - $NIGHTLY_MASTER
+      - $DEPLOY_RUN_IOS
+      - $NIGHTLY_RELEASE
+      - $ENABLE_IOS_TESTS
+
+  variables:
+    CMAKE_GENERATOR: Xcode
+    CMAKE_OPTIONS: -DENABLE_SWIFT_WRAPPER=YES -DENABLE_JAZZY_DOC=YES -DENABLE_UNIT_TESTS=YES $SCHEDULE_CMAKE_OPTIONS
+    ADDITIONAL_BUILD_CONFIGURATIONS: --config RelWithDebInfo
+    ARCHS_OPTIONS: "arm64,armv7,x86_64"
+    ADDITIONAL_BUILD_OPTIONS: -IDEBuildOperationMaxNumberOfConcurrentCompileTasks=$MAX_NUMBER_TASK
+
+  # All variables declared in "variables" are processed before "before_script" and "script", so declaring XCODE_OPTIONS (path to base URL) in before_script allows to set it dynamically.
+
+  before_script:
+   - IOS_DEPLOY_URL=$IOS_RELEASES_URL
+   - |
+       if [[ $(git -C liblinphone describe) =~ .*(alpha|beta).* ]];
+       then IOS_DEPLOY_URL=$IOS_SNAPSHOTS_URL
+       fi
+   - echo $IOS_DEPLOY_URL
+   - XCODE_OPTIONS="-DLINPHONESDK_IOS_BASE_URL=$IOS_DEPLOY_URL"
+
+  extends: .job-ios
+
+#################################################
+# Tests
+#################################################
+
+test-liblinphone-ios:
+  tags: [ "macosx-xcode12" ]
+  stage: test
+  allow_failure: true
+  needs:
+    - job-ios-xcode
+
+  only:
+    variables:
+      - $ENABLE_IOS_TESTS
+
+  variables:
+    LOG_PATTERN: "logLiblinphoneIos"
+    XML_PATTERN: "TEST"
+    NUMBER_DEVICES: 4
+
+  script:
+    - if timeout --signal=SIGINT 1 xcrun simctl list; then echo "show all devices"; else killall -9 com.apple.CoreSimulator.CoreSimulatorService; echo "restart core service"; fi
+    - unzip build-ios/linphone-sdk-*.zip -d build-ios/
+    - cd ${CI_PROJECT_DIR}/tester/IOS/LinphoneTester
+    - echo ${CI_PROJECT_DIR}/tester/IOS/LinphoneTester
+    - pod install
+
+    # Test launching
+    - |
+        xcodebuild -workspace LinphoneTester.xcworkspace \
+        -scheme LinphoneTester -sdk iphonesimulator \
+        -destination name='iPhone 8' \
+        -parallel-testing-enabled YES -parallel-testing-worker-count $NUMBER_DEVICES \
+        -derivedDataPath $WORKSPACE build test 2>&1 | tee $LOG_PATTERN.txt
+
+  after_script:
+    - trainer ${CI_PROJECT_DIR}/tester/IOS/LinphoneTester/build/Logs/Test/*.xcresult -o .
+    - mv *.xml $XML_PATTERN.xml
+
+
+    - BRANCH=$CI_COMMIT_REF_NAME
+    - echo $BRANCH
+    - ESCAPED_BRANCH=$(echo $BRANCH | tr / _)
+    - echo $ESCAPED_BRANCH
+    - COMMIT=$(git describe)
+    - echo $COMMIT
+    - URL=https://linphone.org/snapshots/allure-tests-reports/$ESCAPED_BRANCH/$COMMIT-$CI_JOB_ID/ios/liblinphone/allure-report
+
+    - echo "<\!DOCTYPE HTML>" >> index.html
+    - echo "<meta charset=\"UTF-8\">" >> index.html
+    - echo "<meta http-equiv=\"refresh\" content=\"1; url=$URL\">" >> index.html
+    - echo "<script>" >> index.html
+    - echo "  window.location.href = \"$URL\"" >> index.html
+    - echo "</script>" >> index.html
+    - echo "<title>Page Redirection</title>" >> index.html
+    - echo "<\!-- Don't tell people to \`click\` the link, just tell them that it is a link. -->" >> index.html
+    - echo "If you are not redirected automatically, follow the <a href='$URL'>link to see the test report</a>" >> index.html
+    - cat index.html
+
+    - echo "TEST REPORTS URL $URL"
+
+    - echo "alias URL=https://linphone.org/snapshots/allure-tests-reports/$ESCAPED_BRANCH/$GITLAB_USER_LOGIN/$COMMIT-$CI_JOB_ID/ios/liblinphone/allure-report"
+
+    #Gathering artifacts in one folder to ease their use
+    - mkdir ${CI_PROJECT_DIR}/results
+    - echo $CI_JOB_ID > ${CI_PROJECT_DIR}/results/tests_id
+    - echo $CI_JOB_URL > ${CI_PROJECT_DIR}/results/job_url
+    - cp -r $XML_PATTERN.xml ${CI_PROJECT_DIR}/results
+    - cp -r tester/IOS/LinphoneTester/$LOG_PATTERN.txt ${CI_PROJECT_DIR}/results
+    - cp index.html ${CI_PROJECT_DIR}/results
+
+  artifacts:
+    paths:
+      - results/*
+    when: always
+    reports:
+      junit:
+        - ${CI_PROJECT_DIR}/results/*.xml
+    expire_in: 4 week

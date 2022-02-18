@@ -1,0 +1,153 @@
+#Build template to use in other job scripts without having to copy same code
+#format = .className: &referenceName
+#Use = "<< *referenceName" to use the template ("-*" in script)
+
+
+.factorize_debian9: &docker_image_platform_and_runner_tag
+  tags: [ "docker-test" ]
+  image: gitlab.linphone.org:4567/bc/public/linphone-sdk/bc-dev-debian9:$DEBIAN_9_IMAGE_VERSION
+  variables:
+    PLATFORM: linux-debian9
+
+#################################################
+# Makefile
+#################################################
+
+
+#job-debian9-makefile-gcc:
+#
+#  tags: [ "docker" ]
+#  image: gitlab.linphone.org:4567/bc/public/linphone-sdk/bc-dev-debian9:$DEBIAN_9_IMAGE_VERSION
+#  only:
+#    variables:
+#      - $NIGHTLY_MASTER
+#  variables:
+#    CMAKE_GENERATOR: Unix Makefiles
+#    CC: gcc
+#    CXX: g++
+#    ADDITIONAL_BUILD_OPTIONS: -j$MAKEFILE_JOBS
+#  extends: .job-linux-desktop
+
+
+job-debian9-makefile-clang:
+
+  tags: [ "docker" ]
+  image: gitlab.linphone.org:4567/bc/public/linphone-sdk/bc-dev-debian9:$DEBIAN_9_IMAGE_VERSION
+  only:
+    variables:
+      - $NIGHTLY_MASTER
+  variables:
+    CMAKE_GENERATOR: Unix Makefiles
+    CC: clang
+    CXX: clang++
+    ADDITIONAL_BUILD_OPTIONS: -j$MAKEFILE_JOBS
+  extends: .job-linux-desktop
+
+
+#################################################
+# Ninja
+#################################################
+
+
+job-debian9-ninja-gcc:
+
+  tags: [ "docker" ]
+  image: gitlab.linphone.org:4567/bc/public/linphone-sdk/bc-dev-debian9:$DEBIAN_9_IMAGE_VERSION
+  except:
+    variables:
+      - $DOCKER_UPDATE
+      - $SKIP_LINUX
+  variables:
+    CMAKE_OPTIONS: -DENABLE_DOC=ON
+    CMAKE_GENERATOR: Ninja
+    CC: gcc
+    CXX: g++
+  extends: .job-linux-desktop
+
+
+#job-debian9-ninja-gcc-novideo:
+#
+#  only:
+#    variables:
+#      - $NIGHTLY_MASTER
+#  variables:
+#    CMAKE_OPTIONS: -DENABLE_VIDEO=NO
+#  extends: job-debian9-ninja-gcc
+
+
+job-debian9-ninja-gcc-smallsdk:
+
+  variables:
+    CMAKE_OPTIONS: -DENABLE_VIDEO=NO -DENABLE_ADVANCED_IM=NO -DENABLE_DB_STORAGE=NO
+  extends: job-debian9-ninja-gcc
+
+
+#job-debian9-ninja-clang:
+
+#  tags: [ "docker" ]
+#  only:
+#    variables:
+#      - $NIGHTLY_MASTER
+#  image: gitlab.linphone.org:4567/bc/public/linphone-sdk/bc-dev-debian9:$DEBIAN_9_IMAGE_VERSION
+#  variables:
+#    CMAKE_OPTIONS: -DENABLE_DOC=ON
+#    CMAKE_GENERATOR: Ninja
+#    CC: clang
+#    CXX: clang++
+#  extends: .job-linux-desktop
+
+
+#job-debian9-ninja-clang-novideo:
+#  only:
+#    variables:
+#      - $NIGHTLY_MASTER
+#  variables:
+#    CMAKE_OPTIONS: -DENABLE_VIDEO=NO
+#  extends: job-debian9-ninja-clang
+
+#################################################
+# TESTS
+#################################################
+
+
+#Commented until fix for ipv6 for debian 8/9
+test-bctoolbox-debian9:
+  extends: .test-bctoolbox
+  needs:
+    - job-debian9-ninja-gcc
+  <<: *docker_image_platform_and_runner_tag
+
+test-bellesip-debian9:
+  extends: .test-bellesip
+  needs:
+    - job-debian9-ninja-gcc
+  tags: [ "docker-sequential" ]
+  image: gitlab.linphone.org:4567/bc/public/linphone-sdk/bc-dev-debian9:$DEBIAN_9_IMAGE_VERSION
+  variables:
+    PLATFORM: linux-debian9
+
+test-belr-debian9:
+  extends: .test-belr
+  needs:
+    - job-debian9-ninja-gcc
+  <<: *docker_image_platform_and_runner_tag
+
+test-belcard-debian9:
+  extends: .test-belcard
+  needs:
+    - job-debian9-ninja-gcc
+  <<: *docker_image_platform_and_runner_tag
+
+test-bzrtp-debian9:
+  extends: .test-bzrtp
+  needs:
+    - job-debian9-ninja-gcc
+  <<: *docker_image_platform_and_runner_tag
+
+test-liblinphone-debian9:
+  image: gitlab.linphone.org:4567/bc/public/linphone-sdk/bc-dev-debian9-test-liblinphone:$DEBIAN_9_TEST_LIBLIN_IMAGE_VERSION
+  extends: .test-liblinphone
+  needs:
+    - job-debian9-ninja-gcc
+  variables:
+    PLATFORM: linux-debian9

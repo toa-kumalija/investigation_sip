@@ -1,0 +1,156 @@
+#Build template to use in other job scripts without having to copy same code
+#format = .className: &referenceName
+#Use = "<< *referenceName" to use the template ("-*" in script)
+
+
+.factorize_centos8: &docker_image_platform_and_runner_tag
+  tags: [ "docker-test" ]
+  image: gitlab.linphone.org:4567/bc/public/linphone-sdk/bc-dev-centos8:$CENTOS_8_IMAGE_VERSION
+  variables:
+    PLATFORM: linux-centos8
+
+#################################################
+# Makefile
+#################################################
+
+
+job-centos8-makefile-gcc:
+
+  tags: [ "docker" ]
+  image: gitlab.linphone.org:4567/bc/public/linphone-sdk/bc-dev-centos8:$CENTOS_8_IMAGE_VERSION
+  only:
+    variables:
+      - $NIGHTLY_MASTER
+  variables:
+    CMAKE_GENERATOR: Unix Makefiles
+    ADDITIONAL_BUILD_OPTIONS: -j$MAKEFILE_JOBS
+    CC: gcc
+    CXX: g++
+  extends: .job-linux-desktop
+
+
+job-centos8-makefile-clang:
+
+  tags: [ "docker" ]
+  image: gitlab.linphone.org:4567/bc/public/linphone-sdk/bc-dev-centos8:$CENTOS_8_IMAGE_VERSION
+  only:
+    variables:
+      - $NIGHTLY_MASTER
+  variables:
+    CMAKE_GENERATOR: Unix Makefiles
+    ADDITIONAL_BUILD_OPTIONS: -j$MAKEFILE_JOBS
+    CC: clang
+    CXX: clang++
+  extends: .job-linux-desktop
+
+
+#################################################
+# Ninja
+#################################################
+
+
+job-centos8-ninja-gcc:
+
+  tags: [ "docker" ]
+  image: gitlab.linphone.org:4567/bc/public/linphone-sdk/bc-dev-centos8:$CENTOS_8_IMAGE_VERSION
+  variables:
+    CMAKE_GENERATOR: Ninja
+    CC: gcc
+    CXX: g++
+  extends: .job-linux-desktop
+
+
+job-centos8-ninja-gcc-novideo:
+
+  tags: [ "docker" ]
+  only:
+    variables:
+      - $NIGHTLY_MASTER
+  variables:
+    CMAKE_OPTIONS: -DENABLE_VIDEO=NO
+  extends: job-centos8-ninja-gcc
+
+
+job-centos8-ninja-clang:
+
+  tags: [ "docker" ]
+  only:
+    variables:
+      - $NIGHTLY_MASTER
+  image: gitlab.linphone.org:4567/bc/public/linphone-sdk/bc-dev-centos8:$CENTOS_8_IMAGE_VERSION
+  variables:
+    CMAKE_GENERATOR: Ninja
+    CC: clang
+    CXX: clang++
+  extends: .job-linux-desktop
+
+
+job-centos8-ninja-clang-novideo:
+
+  only:
+    variables:
+      - $NIGHTLY_MASTER
+  variables:
+    CMAKE_OPTIONS: -DENABLE_VIDEO=NO
+  extends: job-centos8-ninja-clang
+
+
+#################################################
+# TESTS
+#################################################
+
+
+test-bctoolbox-centos8:
+  extends: .test-bctoolbox
+  needs:
+    - job-centos8-ninja-gcc
+  <<: *docker_image_platform_and_runner_tag
+
+test-bellesip-centos8:
+  extends: .test-bellesip
+  needs:
+    - job-centos8-ninja-gcc
+  #different runner needed because belle-sip_tester can't work in parallel (dialog test suite is crashing randomly)
+  tags: [ "docker-sequential" ]
+  image: gitlab.linphone.org:4567/bc/public/linphone-sdk/bc-dev-centos8:$CENTOS_8_IMAGE_VERSION
+  variables:
+    PLATFORM: linux-centos8
+
+test-belr-centos8:
+  extends: .test-belr
+  needs:
+    - job-centos8-ninja-gcc
+  <<: *docker_image_platform_and_runner_tag
+
+test-belcard-centos8:
+  extends: .test-belcard
+  needs:
+    - job-centos8-ninja-gcc
+  <<: *docker_image_platform_and_runner_tag
+
+test-bzrtp-centos8:
+  extends: .test-bzrtp
+  needs:
+    - job-centos8-ninja-gcc
+  <<: *docker_image_platform_and_runner_tag
+#test-mediastreamer-centos8:
+#  tags: [ "docker-test-centos8-liblinphone-nuc" ]
+#  extends: .test
+#  needs:
+#    - job-centos8-ninja-gcc
+#  variables:
+#    TESTER_BIN: "mediastreamer2_tester"
+#    PULSEAUDIO: "pulseaudio -D -L module-virtual-source --exit-idle-time=-1"
+#    PULSEAUDIO_KILL: "pulseaudio --kill"
+#    LOG_PATTERN: "logMediastreamerAllPar"
+#    PATH_TO_TESTER: "${CI_PROJECT_DIR}/build-desktop/linphone-sdk/desktop/bin"
+#    SET_CAP_SYS_NICE_NET_ADMIN_MS: "sudo setcap cap_net_admin,cap_sys_nice+ep ./${TESTER_BIN}"
+#    PLATFORM: linux-centos8
+
+test-liblinphone-centos8:
+  image: gitlab.linphone.org:4567/bc/public/linphone-sdk/bc-dev-centos8-test-liblinphone:$CENTOS_8_TEST_LIBLIN_IMAGE_VERSION
+  extends: .test-liblinphone
+  needs:
+    - job-centos8-ninja-gcc
+  variables:
+    PLATFORM: linux-centos8
